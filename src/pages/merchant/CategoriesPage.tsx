@@ -6,6 +6,11 @@ import { Spinner } from "../../components/common/Spinner";
 import toast from "react-hot-toast";
 import { api } from "../../config/api";
 
+/**
+ * Forma de una categoría tal como la devuelve el backend.
+ * `slug` y `product_count` son opcionales: no los he visto definidos en
+ * ningún controlador, así que la interfaz es una suposición (ver notas).
+ */
 interface Category {
   id: number;
   name: string;
@@ -13,14 +18,42 @@ interface Category {
   product_count?: number;
 }
 
+/**
+ * Página "Categorías de producto" del comerciante: lista, crea y borra las
+ * categorías de su tienda.
+ *
+ * Es el cliente de endpoints que AÚN NO me has pasado (ver notas):
+ *  - `GET    /api/categories?storeId=` → listado.
+ *  - `POST   /api/categories`          → crear (solo envía `{ name }`).
+ *  - `DELETE /api/categories/:id`      → borrar.
+ *
+ * Conexión con el resto: `parseProductInput` valida que el `category_id` de
+ * un producto pertenezca a la tienda del comerciante, y `ProductsPage`
+ * preselecciona la primera categoría al crear un producto. Por eso conviene
+ * tener al menos una categoría antes de crear productos.
+ *
+ * Es la versión BIEN hecha del patrón de carga de `ProductsPage`: usa
+ * `try/catch/finally`, muestra errores con toast y bloquea los botones
+ * mientras trabaja.
+ */
 export const CategoriesPage: React.FC = () => {
+  // `store` solo se usa como disparador del `useEffect` (ver abajo).
   const { store } = useAuth();
   const [categories, setCategories] = useState<Category[]>([]);
+  // Texto del input "nueva categoría".
   const [name, setName] = useState("");
+  // Carga de la lista (empieza en true: correcto, a diferencia del dashboard).
   const [loading, setLoading] = useState(true);
+  // Creando una categoría (desactiva el botón de añadir).
   const [submitting, setSubmitting] = useState(false);
+  // Id de la categoría que se está borrando, o null. Permite desactivar SOLO
+  // el botón de esa fila y mostrar "..." en ella.
   const [deletingId, setDeletingId] = useState<number | null>(null);
 
+  // Carga la lista cuando hay tienda en el contexto. Se vuelve a ejecutar si
+  // `store` cambia. Sin tienda, quita el "cargando" y deja la lista vacía.
+  // `void` indica a propósito que la promesa no se espera (y evita el aviso
+  // del linter `no-floating-promises`).
   useEffect(() => {
     if (store) {
       void fetchCategories();
@@ -29,6 +62,14 @@ export const CategoriesPage: React.FC = () => {
     }
   }, [store]);
 
+  /**
+   * Carga las categorías de la tienda del usuario.
+   *
+   * Hace dos peticiones: `GET /api/stores/me` (para obtener el id) y
+   * `GET /api/categories?storeId=<id>`. El `finally` garantiza que
+   * `loading` vuelva a `false` aunque algo falle, y los errores se avisan
+   * con toast. Si no hay tienda, deja la lista vacía sin error.
+   */
   const fetchCategories = async () => {
     setLoading(true);
 
@@ -42,11 +83,14 @@ export const CategoriesPage: React.FC = () => {
 
       const storeId = storeRes.data.store.id;
 
+      // `encodeURIComponent` protege el parámetro de la URL (aquí es un
+      // número, pero es buena práctica).
       const res = await api.get(
         `/api/categories?storeId=${encodeURIComponent(storeId)}`
       );
 
       if (res.data?.success) {
+        // `?? []` evita que la lista quede `undefined` si falta el campo.
         setCategories(res.data.categories ?? []);
       } else {
         toast.error(res.data?.message || "Failed to load categories");
@@ -61,8 +105,14 @@ export const CategoriesPage: React.FC = () => {
     }
   };
 
+  /**
+   * Crea una categoría con `POST /api/categories { name }`. Si va bien, vacía
+   * el input y recarga la lista COMPLETA (`await fetchCategories()`), lo que
+   * trae el slug y el contador generados por el servidor. Si el nombre está
+   * vacío, no hace nada.
+   */
   const handleCreate = async (e: React.FormEvent<HTMLFormElement>) => {
-    e.preventDefault();
+    e.preventDefault(); // evita que el navegador recargue la página
 
     const trimmedName = name.trim();
     if (!trimmedName) return;
@@ -91,6 +141,12 @@ export const CategoriesPage: React.FC = () => {
     }
   };
 
+  /**
+   * Borra una categoría tras confirmación (`DELETE /api/categories/:id`) y la
+   * quita de la lista local sin volver a pedirla. El mensaje de confirmación
+   * avisa de que los productos pueden quedar sin categoría; que eso ocurra
+   * depende del `onDelete` de la relación en Prisma (ver notas).
+   */
   const handleDelete = async (id: number) => {
     const confirmed = window.confirm(
       "Are you sure? Products in this category may become uncategorized."
@@ -126,6 +182,8 @@ export const CategoriesPage: React.FC = () => {
           Product Categories
         </h1>
 
+        {/* FORMULARIO DE CREACIÓN. `maxLength={100}` limita el input; el
+                    botón se desactiva mientras se envía o si el texto está vacío. */}
         <div className="rounded-3xl border border-neutral-200/80 bg-white p-6">
           <h2 className="mb-3 text-xs font-semibold uppercase tracking-wider text-neutral-900">
             Create Category
@@ -156,6 +214,7 @@ export const CategoriesPage: React.FC = () => {
           </form>
         </div>
 
+        {/* LISTA. Tres estados: cargando, vacía o con categorías. */}
         <div className="overflow-hidden rounded-3xl border border-neutral-200/80 bg-white">
           <div className="flex items-center justify-between border-b border-neutral-100 p-5 sm:p-6">
             <h2 className="font-medium text-neutral-900">
@@ -190,6 +249,7 @@ export const CategoriesPage: React.FC = () => {
                         {c.name}
                       </h3>
 
+                      {/* "—" si la categoría no tiene slug. */}
                       <span className="font-mono text-[10px] text-neutral-400">
                         slug: {c.slug || "—"}
                       </span>
@@ -197,6 +257,7 @@ export const CategoriesPage: React.FC = () => {
                   </div>
 
                   <div className="flex items-center gap-4">
+                    {/* `product_count` lo calcula el backend (ver notas). */}
                     <span className="rounded-full bg-neutral-100 px-3 py-1 font-mono text-[11px] text-neutral-600">
                       {c.product_count ?? 0} products
                     </span>
