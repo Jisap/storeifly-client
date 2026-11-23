@@ -33,9 +33,9 @@ const CURRENCY_OPTIONS = [
  * backend (`storeController.ts`).
  */
 const PAYMENT_METHOD_OPTIONS: { value: string; label: string }[] = [
-  { value: "mobile_money",     label: "Mobile Money" },
+  { value: "mobile_money", label: "Mobile Money" },
   { value: "cash_on_delivery", label: "Cash on Delivery" },
-  { value: "bank_transfer",    label: "Bank Transfer" },
+  { value: "bank_transfer", label: "Bank Transfer" },
 ];
 
 /**
@@ -353,11 +353,10 @@ export const SettingsPage: React.FC = () => {
                 return (
                   <label
                     key={value}
-                    className={`flex items-center gap-2 px-4 py-2 rounded-full text-xs font-medium cursor-pointer border transition select-none ${
-                      checked
+                    className={`flex items-center gap-2 px-4 py-2 rounded-full text-xs font-medium cursor-pointer border transition select-none ${checked
                         ? "bg-emerald-50 border-emerald-500 text-emerald-800"
                         : "bg-neutral-100 border-neutral-200 text-neutral-700 hover:bg-neutral-200"
-                    }`}
+                      }`}
                   >
                     <input
                       type="checkbox"
@@ -372,7 +371,7 @@ export const SettingsPage: React.FC = () => {
             </div>
           </div>
 
-          {/* Envío: coste y umbral de envío gratis. */}
+          {/* Envío: coste y umbral de envío gratis... */}
           <StoreShippingForm
             shippingFee={shippingFee}
             onShippingFeeChange={setShippingFee}
