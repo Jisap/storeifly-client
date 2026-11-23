@@ -3,6 +3,10 @@ import { Palette, Scissors, Check, Loader2, X, RefreshCw, Sparkle, User, Upload 
 import toast from "react-hot-toast";
 import { api } from "../../../config/api";
 
+/**
+ * Propiedades del modal de edición de imágenes con IA.
+ * Permite recolorar, eliminar fondo o generar fotos con modelo.
+ */
 interface ProductAiImageModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -24,28 +28,35 @@ export const ProductAiImageModal: React.FC<ProductAiImageModalProps> = ({
   onReplaceImage,
   onAddColorVariantOption,
 }) => {
+  // --- ESTADOS DE NAVEGACIÓN Y SELECCIÓN ---
   const [activeTab, setActiveTab] = useState<"recolor" | "bg-removal" | "on-model">("recolor");
   const [currentImageIndex, setCurrentImageIndex] = useState(selectedImageIndex);
+
+  // --- ESTADOS PARA RECULAR ---
   const [prompt, setPrompt] = useState("");
   const [color, setColor] = useState("#2563eb");
   const [colorLabel, setColorLabel] = useState("Blue");
   const [addToVariants, setAddToVariants] = useState(true);
 
+  // --- ESTADOS PARA GENERACIÓN "ON-MODEL" ---
   const [modelUrl, setModelUrl] = useState("https://res.cloudinary.com/demo/image/upload/v1784148584/docs/female-model-01.jpg");
   const [isUploadingModel, setIsUploadingModel] = useState(false);
   const [garmentType, setGarmentType] = useState("jacket");
   const [pose, setPose] = useState("confident standing position");
   const [background, setBackground] = useState("clean, plain white background");
 
+  // --- ESTADOS DE PROCESO Y RESULTADO ---
   const [isProcessing, setIsProcessing] = useState(false);
   const [transformedUrl, setTransformedUrl] = useState<string | null>(null);
 
+  // Sincroniza el índice de la imagen cuando se abre el modal o cambia la selección externa
   useEffect(() => {
     if (images.length > 0) {
       setCurrentImageIndex(Math.min(Math.max(0, selectedImageIndex), images.length - 1));
     }
   }, [selectedImageIndex, images.length, isOpen]);
 
+  // Pre-llena el prompt e infiere el tipo de prenda basándose en el nombre del producto
   useEffect(() => {
     if (productName && !prompt) {
       setPrompt(productName.toLowerCase());
@@ -58,10 +69,14 @@ export const ProductAiImageModal: React.FC<ProductAiImageModalProps> = ({
     }
   }, [productName]);
 
+  // Evita renderizar el modal si no está activo
   if (!isOpen) return null;
 
   const sourceImage = images[currentImageIndex] || images[0];
 
+  /**
+   * Maneja la subida de una imagen de referencia para el modelo.
+   */
   const handleUploadModelFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -71,7 +86,10 @@ export const ProductAiImageModal: React.FC<ProductAiImageModalProps> = ({
       const formData = new FormData();
       formData.append("image", file);
 
-      const res = await api.post("/api/upload/single", formData, { headers: { "Content-Type": "multipart/form-data", } });
+      const res = await api.post("/api/upload/single", formData, {
+        headers: { "Content-Type": "multipart/form-data" }
+      });
+
       if (res.data?.success && res.data?.url) {
         setModelUrl(res.data.url);
         toast.success("Model image uploaded!");
@@ -79,10 +97,13 @@ export const ProductAiImageModal: React.FC<ProductAiImageModalProps> = ({
     } catch (err: any) {
       toast.error(err.response?.data?.message || "Failed to upload model image");
     } finally {
-      setIsUploadingModel(false)
+      setIsUploadingModel(false);
     }
   };
 
+  /**
+   * Ejecuta la transformación de IA según la pestaña activa.
+   */
   const handleTransform = async () => {
     if (!sourceImage) return toast.error("No image selected");
     if (activeTab === "recolor" && !prompt.trim()) {
@@ -126,12 +147,17 @@ export const ProductAiImageModal: React.FC<ProductAiImageModalProps> = ({
     } catch (err: any) {
       toast.error(err.response?.data?.message || "Transformation failed");
     } finally {
-      setIsProcessing(false)
+      setIsProcessing(false);
     }
   };
 
+  /**
+   * Guarda el resultado: añade como nueva imagen o reemplaza la existente.
+   * Opcionalmente, añade el color como una variante del producto.
+   */
   const handleSave = (replace: boolean) => {
     if (!transformedUrl) return;
+
     if (replace) {
       onReplaceImage(currentImageIndex, transformedUrl);
     } else {
@@ -149,7 +175,8 @@ export const ProductAiImageModal: React.FC<ProductAiImageModalProps> = ({
   return (
     <div className="fixed inset-0 z-60 bg-neutral-950/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
       <div className="bg-white rounded-3xl max-w-3xl w-full p-5 sm:p-6 max-h-[90vh] overflow-y-auto border border-neutral-200/80 shadow-xl my-auto">
-        {/* Header */}
+
+        {/* Encabezado del modal */}
         <div className="flex items-center justify-between pb-3 border-b border-neutral-100">
           <div className="flex items-center gap-2.5">
             <div className="w-8 h-8 rounded-xl flex items-center justify-center text-emerald-600">
@@ -166,7 +193,7 @@ export const ProductAiImageModal: React.FC<ProductAiImageModalProps> = ({
           </button>
         </div>
 
-        {/* Image selector if multiple */}
+        {/* Selector de imágenes en miniatura (solo si hay múltiples) */}
         {images.length > 1 && (
           <div className="flex items-center gap-2 mt-3 overflow-x-auto pb-1">
             {images.map((img, idx) => (
@@ -175,11 +202,11 @@ export const ProductAiImageModal: React.FC<ProductAiImageModalProps> = ({
                 type="button"
                 onClick={() => {
                   setCurrentImageIndex(idx);
-                  setTransformedUrl(null);
+                  setTransformedUrl(null); // Limpia el resultado al cambiar de imagen
                 }}
                 className={`relative w-12 h-12 rounded-xl overflow-hidden border-2 shrink-0 transition cursor-pointer ${currentImageIndex === idx
-                  ? "border-emerald-600 ring-2 ring-emerald-500/20"
-                  : "border-neutral-200 opacity-60"
+                    ? "border-emerald-600 ring-2 ring-emerald-500/20"
+                    : "border-neutral-200 opacity-60"
                   }`}
               >
                 <img src={img} alt="" className="w-full h-full object-cover" />
@@ -188,52 +215,38 @@ export const ProductAiImageModal: React.FC<ProductAiImageModalProps> = ({
           </div>
         )}
 
-        {/* Tabs */}
+        {/* Pestañas de herramientas de IA */}
         <div className="flex border-b border-neutral-100 gap-4 mt-4">
           <button
             type="button"
-            onClick={() => {
-              setActiveTab("recolor");
-              setTransformedUrl(null);
-            }}
-            className={`pb-2 text-xs font-medium inline-flex items-center gap-1.5 border-b-2 transition cursor-pointer ${activeTab === "recolor"
-              ? "border-emerald-600 text-emerald-700"
-              : "border-transparent text-neutral-400 hover:text-neutral-700"
+            onClick={() => { setActiveTab("recolor"); setTransformedUrl(null); }}
+            className={`pb-2 text-xs font-medium inline-flex items-center gap-1.5 border-b-2 transition cursor-pointer ${activeTab === "recolor" ? "border-emerald-600 text-emerald-700" : "border-transparent text-neutral-400 hover:text-neutral-700"
               }`}
           >
             <Palette className="w-3.5 h-3.5" /> Recolor
           </button>
           <button
             type="button"
-            onClick={() => {
-              setActiveTab("bg-removal");
-              setTransformedUrl(null);
-            }}
-            className={`pb-2 text-xs font-medium inline-flex items-center gap-1.5 border-b-2 transition cursor-pointer ${activeTab === "bg-removal"
-              ? "border-emerald-600 text-emerald-700"
-              : "border-transparent text-neutral-400 hover:text-neutral-700"
+            onClick={() => { setActiveTab("bg-removal"); setTransformedUrl(null); }}
+            className={`pb-2 text-xs font-medium inline-flex items-center gap-1.5 border-b-2 transition cursor-pointer ${activeTab === "bg-removal" ? "border-emerald-600 text-emerald-700" : "border-transparent text-neutral-400 hover:text-neutral-700"
               }`}
           >
             <Scissors className="w-3.5 h-3.5" /> Remove Background
           </button>
           <button
             type="button"
-            onClick={() => {
-              setActiveTab("on-model");
-              setTransformedUrl(null);
-            }}
-            className={`pb-2 text-xs font-medium inline-flex items-center gap-1.5 border-b-2 transition cursor-pointer ${activeTab === "on-model"
-              ? "border-emerald-600 text-emerald-700"
-              : "border-transparent text-neutral-400 hover:text-neutral-700"
+            onClick={() => { setActiveTab("on-model"); setTransformedUrl(null); }}
+            className={`pb-2 text-xs font-medium inline-flex items-center gap-1.5 border-b-2 transition cursor-pointer ${activeTab === "on-model" ? "border-emerald-600 text-emerald-700" : "border-transparent text-neutral-400 hover:text-neutral-700"
               }`}
           >
             <User className="w-3.5 h-3.5" /> On-Model Photo
           </button>
         </div>
 
-        {/* Main Content */}
+        {/* Contenido principal: Grid de controles y vista previa */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-5 mt-4">
-          {/* Controls */}
+
+          {/* Panel izquierdo: Controles dinámicos según la pestaña */}
           <div className="space-y-3">
             {activeTab === "recolor" && (
               <>
@@ -357,6 +370,7 @@ export const ProductAiImageModal: React.FC<ProductAiImageModalProps> = ({
               </>
             )}
 
+            {/* Botón de acción principal */}
             <button
               type="button"
               disabled={isProcessing || !sourceImage}
@@ -380,7 +394,7 @@ export const ProductAiImageModal: React.FC<ProductAiImageModalProps> = ({
             </button>
           </div>
 
-          {/* Previews */}
+          {/* Panel derecho: Vista previa (Original vs Resultado) */}
           <div className="space-y-3 flex flex-col justify-between">
             <div className="grid grid-cols-2 gap-2 flex-1 min-h-40">
               <div className="flex flex-col">
@@ -403,6 +417,7 @@ export const ProductAiImageModal: React.FC<ProductAiImageModalProps> = ({
               </div>
             </div>
 
+            {/* Botones de acción post-generación */}
             {transformedUrl && (
               <div className="flex gap-2 pt-2 border-t border-neutral-100">
                 <button
