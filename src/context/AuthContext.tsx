@@ -45,7 +45,6 @@ export interface User {
  * Notas:
  *  - `shipping_fee` y `free_shipping_threshold` están como `number`, pero el
  *    backend los envía como `Decimal`, que viaja como STRING ("5.00"). Ver notas.
- *  - Falta `payment_methods` (el campo nuevo que añadiste al schema).
  */
 export interface Store {
   id: number | string;
@@ -59,6 +58,7 @@ export interface Store {
   status: "active" | "suspended";
   shipping_fee: number;
   free_shipping_threshold: number;
+  payment_methods?: string[];
   hero_style?: "hero1" | "hero2" | "hero3" | "hero4" | string;
   accent_color?: string;
 }
