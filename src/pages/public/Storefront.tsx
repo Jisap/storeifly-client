@@ -13,16 +13,27 @@ import { LandingCta } from "../../components/public/landing/LandingCta";
 import { getStoreAccentStyles } from "../../utils/storeAccent";
 import { api } from "../../config/api";
 
+/**
+ * Página de la tienda (Storefront).
+ * Carga y muestra la información pública de una tienda específica basada en su slug,
+ * incluyendo productos, banners y secciones de contenido, aplicando los estilos de acento de la marca.
+ */
 export const Storefront: React.FC = () => {
+  // Obtiene el identificador de la tienda desde la URL
   const { storeSlug } = useParams<{ storeSlug: string }>();
+  // Accede al contexto del carrito para sincronizar la tienda activa y añadir productos
   const { setStoreSlug, addToCart } = useCart();
 
+  // Estados de datos y UI (Nota: se recomienda definir interfaces `Store` y `Product` en el futuro)
   const [store, setStore] = useState<any>(null);
   const [products, setProducts] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  // Estado temporal para feedback visual (ej. animación de "Añadido") en el botón de compra rápida
   const [addedId, setAddedId] = useState<number | null>(null);
 
+  // Sincroniza el slug con el contexto del carrito y dispara la carga de datos cuando cambia la URL
   useEffect(() => {
     if (storeSlug) {
       setStoreSlug(storeSlug);
@@ -30,6 +41,10 @@ export const Storefront: React.FC = () => {
     }
   }, [storeSlug]);
 
+  /**
+   * Obtiene los datos de la tienda y sus productos activos en paralelo 
+   * para optimizar el tiempo de carga.
+   */
   const fetchStoreData = async (slug: string) => {
     setLoading(true);
     setError(null);
@@ -39,6 +54,7 @@ export const Storefront: React.FC = () => {
         api.get(`/api/stores/slug/${encodeURIComponent(slug)}`),
         api.get(`/api/products?storeSlug=${encodeURIComponent(slug)}&status=active`),
       ]);
+
       if (storeRes.data?.success) setStore(storeRes.data.store);
       if (prodRes.data?.success) setProducts(prodRes.data.products);
     } catch (err: any) {
@@ -48,21 +64,31 @@ export const Storefront: React.FC = () => {
     }
   };
 
+  /**
+   * Maneja la adición rápida de un producto al carrito.
+   * Detiene la propagación del evento para evitar navegaciones no deseadas (ej. si está dentro de un <Link>).
+   */
   const handleQuickAdd = (e: React.MouseEvent, p: any) => {
     e.preventDefault();
     e.stopPropagation();
+
     addToCart({
       productId: p.id,
       name: p.name,
       price: Number(p.price),
       image: p.images?.[0],
       quantity: 1,
+      // Construye una cadena de variante por defecto si existen variantes
       variant: p.variants?.length ? `${p.variants[0].name}: ${p.variants[0].options[0]}` : undefined,
       stock: p.stock,
     });
+
+    // Activa el feedback visual temporalmente
     setAddedId(p.id);
     setTimeout(() => setAddedId(null), 1500);
   };
+
+  // --- RENDERIZADO CONDICIONAL ---
 
   if (loading) return <Spinner fullScreen />;
 
@@ -79,7 +105,9 @@ export const Storefront: React.FC = () => {
     );
   }
 
+  // --- RENDERIZADO PRINCIPAL ---
   return (
+    // Aplica variables CSS dinámicas basadas en el color de acento de la tienda
     <div
       className="min-h-screen bg-white text-neutral-900 flex flex-col font-sans"
       style={getStoreAccentStyles(store?.accent_color)}
@@ -96,9 +124,7 @@ export const Storefront: React.FC = () => {
         />
 
         <StoreTestimonials />
-
         <StoreFaq />
-
         <LandingCta />
       </main>
 
