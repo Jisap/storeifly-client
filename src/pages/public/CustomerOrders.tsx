@@ -4,6 +4,7 @@ import { useAuth } from "../../context/AuthContext";
 import { StoreNavbar } from "../../components/StoreNavbar";
 import { ShoppingBag, ArrowLeft, Truck } from "lucide-react";
 import { getStoreAccentStyles } from "../../utils/storeAccent";
+import { formatPaymentMethod } from "../../utils/payment";
 import { api } from "../../config/api";
 
 /**
@@ -187,8 +188,8 @@ export const CustomerOrders: React.FC = () => {
                       {store?.currency || "$"}
                       {Number(o.total || 0).toFixed(2)}
                     </span>
-                    <span className="block text-[11px] text-neutral-400 capitalize">
-                      {o.payment_method || "N/A"} ({o.payment_status || "Pending"})
+                    <span className="block text-[11px] text-neutral-400">
+                      {formatPaymentMethod(o.payment_method)} ({o.payment_status || "Pending"})
                     </span>
                   </div>
                 </div>

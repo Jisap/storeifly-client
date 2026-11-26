@@ -121,6 +121,7 @@ export const CartPage: React.FC = () => {
                 isFreeShipping={isFreeShipping}
                 estimatedTotal={estimatedTotal}
                 storeSlug={storeSlug || ""}
+                paymentMethods={store?.payment_methods}
               />
             </div>
           </div>

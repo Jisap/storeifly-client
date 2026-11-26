@@ -1,6 +1,7 @@
 import React from "react";
 import { Link } from "react-router-dom";
 import { ArrowRight, ShieldCheck, Truck } from "lucide-react";
+import { formatPaymentMethod } from "../../../utils/payment";
 
 interface CartSummarySidebarProps {
     subtotal: number;
@@ -8,6 +9,7 @@ interface CartSummarySidebarProps {
     isFreeShipping: boolean;
     estimatedTotal: number;
     storeSlug: string;
+    paymentMethods?: string[];
 }
 
 export const CartSummarySidebar: React.FC<CartSummarySidebarProps> = ({
@@ -16,6 +18,7 @@ export const CartSummarySidebar: React.FC<CartSummarySidebarProps> = ({
     isFreeShipping,
     estimatedTotal,
     storeSlug,
+    paymentMethods,
 }) => {
     return (
         <div className="bg-white rounded-2xl sm:rounded-4xl border border-neutral-200 p-7 sm:p-8 space-y-6">
@@ -61,6 +64,22 @@ export const CartSummarySidebar: React.FC<CartSummarySidebarProps> = ({
                     <span>30-Day Hassle-Free Returns</span>
                 </div>
             </div>
+
+            {/* Accepted Payment Methods */}
+            {paymentMethods && paymentMethods.length > 0 && (
+                <div className="pt-3 border-t border-neutral-100 space-y-1.5">
+                    <span className="text-[10px] font-medium text-neutral-400 uppercase tracking-wider block">
+                        Accepted Payments
+                    </span>
+                    <div className="flex flex-wrap gap-1.5">
+                        {paymentMethods.map((m) => (
+                            <span key={m} className="px-2.5 py-0.5 rounded-full bg-neutral-100 text-[10px] font-medium text-neutral-600">
+                                {formatPaymentMethod(m)}
+                            </span>
+                        ))}
+                    </div>
+                </div>
+            )}
         </div>
     );
 };

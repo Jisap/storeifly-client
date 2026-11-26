@@ -3,6 +3,7 @@ import { useParams, Link } from "react-router-dom";
 import { StoreNavbar } from "../../components/StoreNavbar";
 import { ArrowRight, ShoppingBag } from "lucide-react";
 import { getStoreAccentStyles } from "../../utils/storeAccent";
+import { formatPaymentMethod } from "../../utils/payment";
 import { api } from "../../config/api";
 
 /**
@@ -182,9 +183,9 @@ export const OrderConfirmation: React.FC = () => {
               <span className="font-medium text-neutral-400 uppercase tracking-wider block mb-1 text-[10px]">
                 Payment Details
               </span>
-              <p className="text-neutral-900 font-medium">Cash on Delivery (COD)</p>
+              <p className="text-neutral-900 font-medium">{formatPaymentMethod(order.payment_method)}</p>
               <p className={`mt-1 font-medium ${order.payment_status === "paid" ? "store-accent-text" : "text-amber-700"}`}>
-                Status: {order.payment_status.toUpperCase()}
+                Status: {(order.payment_status || "pending").toUpperCase()}
               </p>
             </div>
           </div>
