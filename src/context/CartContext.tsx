@@ -50,6 +50,7 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }, [cart, storeSlug]);
 
     const addToCart = (item: CartItem) => {
+        if (item.stock <= 0) return;
         setCart((prev) => {
             const existingIndex = prev.findIndex((i) => i.productId === item.productId && i.variant === item.variant);
             if (existingIndex > -1) {

@@ -1,5 +1,5 @@
-import React, { useEffect, useState, useMemo } from "react";
-import { useParams, Link, useSearchParams } from "react-router-dom";
+import React, { useEffect, useState, useMemo, useRef } from "react";
+import { useParams, Link, useSearchParams, useNavigate } from "react-router-dom";
 import { StoreNavbar } from "../../components/StoreNavbar";
 import { StoreFooter } from "../../components/StoreFooter";
 import { ProductCard, type ProductCardItem } from "../../components/common/ProductCard";
@@ -8,6 +8,25 @@ import { Search, X, ChevronRight, ShoppingBag, ArrowUpDown } from "lucide-react"
 import { Spinner } from "../../components/common/Spinner";
 import { getStoreAccentStyles } from "../../utils/storeAccent";
 import { api } from "../../config/api";
+
+/**
+ * Tienda pública tal como la devuelve `GET /api/stores/slug/:slug`.
+ * No incluye campos sensibles internos como `merchant_id`.
+ */
+export interface PublicStore {
+  id?: number;
+  name: string;
+  slug: string;
+  logo_url?: string;
+  banner_url?: string;
+  description?: string;
+  currency?: string;
+  hero_style?: string;
+  accent_color?: string;
+  shipping_fee?: number | string;
+  free_shipping_threshold?: number | string;
+  payment_methods?: string[];
+}
 
 /**
  * Opciones del selector de orden. `value` es lo que se guarda en el estado y
@@ -26,132 +45,229 @@ const SORT_OPTIONS = [
 
 /**
  * Página pública "Todos los productos" de una tienda: catálogo completo con
- * buscador y ordenación. Ruta esperada: algo como `/store/:storeSlug/products`.
+ * buscador, filtro por categoría y ordenación. Ruta: `/store/:storeSlug/products`.
  *
  * Es la parte PÚBLICA (clientes), a diferencia de `ProductsPage` (comerciante).
  * Consume dos endpoints de la function pública de Neon (solo lectura):
- *  - `GET /stores/slug/:slug`                   → datos de la tienda.
- *  - `GET /products?storeSlug=&status=active`   → productos activos.
+ *  - `GET /api/stores/slug/:slug`                   → datos de la tienda.
+ *  - `GET /api/products?storeSlug=&status=active`   → productos activos.
  *
- * La búsqueda y la ordenación se hacen EN EL CLIENTE sobre la lista ya
- * cargada, y se reflejan en la URL (`?q=` y `?sort=`) para poder compartir
- * o recargar la vista.
+ * Mejoras aplicadas:
+ *  - Quick-add inteligente: si el producto tiene variantes, redirige al detalle
+ *    para que el cliente elija variante y no compre una equivocada a ciegas.
+ *  - Validación de stock en quick-add: impide añadir productos agotados.
+ *  - Selector de categorías dinámico generado a partir del catálogo cargado.
+ *  - Sincronización bidireccional limpia con `searchParams` sin bucles ni desajustes al volver atrás.
+ *  - Prevención de race conditions al cambiar de tienda con flag `cancelled`.
+ *  - Limpieza de temporizadores (`setTimeout`) al desmontar el componente.
+ *  - Comparación de texto en español (`es`) con sensibilidad base para ordenación A-Z.
  */
 export const AllProducts: React.FC = () => {
   const { storeSlug } = useParams<{ storeSlug: string }>();
-  // Parámetros de la URL: `?q=` (búsqueda) y `?sort=` (orden).
+  const navigate = useNavigate();
+
+  // Parámetros de la URL: `?q=` (búsqueda), `?sort=` (orden) y opcionalmente `?category=`.
   const [searchParams, setSearchParams] = useSearchParams();
+
   // `setStoreSlug` le dice al carrito de qué tienda es (un carrito por tienda);
   // `addToCart` añade líneas.
   const { setStoreSlug, addToCart } = useCart();
 
-  const [store, setStore] = useState<any>(null);
-
+  const [store, setStore] = useState<PublicStore | null>(null);
   const [products, setProducts] = useState<ProductCardItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
   // Id del producto recién añadido: sirve para mostrar el feedback "Added" 1,5 s.
   const [addedId, setAddedId] = useState<number | null>(null);
+  const addedTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Los filtros se inicializan desde la URL: abrir un enlace con `?q=taza`
-  // ya aplica la búsqueda.
+  // Estados locales inicializados desde los searchParams
   const [searchQuery, setSearchQuery] = useState(searchParams.get("q") || "");
   const [sortBy, setSortBy] = useState(searchParams.get("sort") || "featured");
+  const [selectedCategory, setSelectedCategory] = useState(searchParams.get("category") || "all");
 
-  // Al cambiar de tienda: registra el slug en el carrito y recarga los datos.
+  // Limpieza del timeout de feedback visual al desmontar
   useEffect(() => {
-    if (storeSlug) {
-      setStoreSlug(storeSlug);
-      fetchInitialData(storeSlug);
-    }
-  }, [storeSlug]);
+    return () => {
+      if (addedTimeoutRef.current) {
+        clearTimeout(addedTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  // Mantener los filtros sincronizados si la URL cambia externamente (ej: botón "Atrás" del navegador)
+  useEffect(() => {
+    const qFromUrl = searchParams.get("q") || "";
+    const sortFromUrl = searchParams.get("sort") || "featured";
+    const catFromUrl = searchParams.get("category") || "all";
+
+    setSearchQuery(qFromUrl);
+    setSortBy(sortFromUrl);
+    setSelectedCategory(catFromUrl);
+  }, [searchParams]);
+
+  // Carga de tienda y productos con protección de cancelación
+  useEffect(() => {
+    if (!storeSlug) return;
+    setStoreSlug(storeSlug);
+
+    let cancelled = false;
+
+    const fetchInitialData = async () => {
+      setLoading(true);
+      setError(null);
+      try {
+        const [storeRes, prodRes] = await Promise.all([
+          api.get(`/api/stores/slug/${encodeURIComponent(storeSlug)}`),
+          api.get(`/api/products?storeSlug=${encodeURIComponent(storeSlug)}&status=active`),
+        ]);
+
+        if (!cancelled) {
+          if (storeRes.data?.success && storeRes.data?.store) {
+            const s = storeRes.data.store;
+            setStore({
+              ...s,
+              id: s.id ? Number(s.id) : undefined,
+              description: s.description ?? undefined,
+              logo_url: s.logo_url ?? undefined,
+              banner_url: s.banner_url ?? undefined,
+              accent_color: s.accent_color ?? undefined,
+            });
+          }
+          if (prodRes.data?.success) setProducts(prodRes.data.products || []);
+        }
+      } catch (err: unknown) {
+        if (!cancelled) {
+          const msg = (err as any)?.response?.data?.message || "Failed to load store products";
+          setError(msg);
+        }
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      }
+    };
+
+    fetchInitialData();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [storeSlug, setStoreSlug]);
 
   /**
-   * Carga tienda y productos EN PARALELO (`Promise.all`). Si cualquiera falla,
-   * se muestra la pantalla "Catalog Unavailable" con el mensaje del servidor
-   * (la function responde 403 si la tienda está suspendida y 404 si no existe).
-   * Se pide `status=active` para que el cliente no vea borradores ni archivados.
+   * Actualiza los parámetros en la URL de forma limpia sin provocar bucles.
    */
-  const fetchInitialData = async (slug: string) => {
-    setLoading(true);
-    setError(null);
-    try {
-      const [storeRes, prodRes] = await Promise.all([
-        api.get(`/api/stores/slug/${encodeURIComponent(slug)}`),
-        api.get(`/api/products?storeSlug=${encodeURIComponent(slug)}&status=active`),
-      ]);
-      if (storeRes.data?.success) setStore(storeRes.data.store);
-      if (prodRes.data?.success) setProducts(prodRes.data.products || []);
-    } catch (err: any) {
-      setError(err.response?.data?.message || "Failed to load store products");
-    } finally {
-      setLoading(false);
-    }
+  const updateParams = (newQ: string, newSort: string, newCat: string) => {
+    const params: Record<string, string> = {};
+    if (newQ.trim()) params.q = newQ.trim();
+    if (newSort !== "featured") params.sort = newSort;
+    if (newCat !== "all") params.category = newCat;
+    setSearchParams(params, { replace: true });
   };
 
-  // Sincroniza búsqueda y orden con la URL. Solo se escriben los valores que
-  // no son los de por defecto (URL limpia). `replace: true` evita llenar el
-  // historial con una entrada por cada tecla.
-  useEffect(() => {
-    const params: Record<string, string> = {};
-    if (searchQuery.trim()) params.q = searchQuery.trim();
-    if (sortBy !== "featured") params.sort = sortBy;
-    setSearchParams(params, { replace: true });
-  }, [searchQuery, sortBy, setSearchParams]);
+  const handleSearchChange = (val: string) => {
+    setSearchQuery(val);
+    updateParams(val, sortBy, selectedCategory);
+  };
+
+  const handleSortChange = (val: string) => {
+    setSortBy(val);
+    updateParams(searchQuery, val, selectedCategory);
+  };
+
+  const handleCategoryChange = (cat: string) => {
+    setSelectedCategory(cat);
+    updateParams(searchQuery, sortBy, cat);
+  };
 
   /**
-   * "Añadir rápido" desde la tarjeta, sin entrar al detalle. `preventDefault`
-   * y `stopPropagation` evitan que el clic navegue (la tarjeta es un enlace).
-   * Si el producto tiene variantes, se elige AUTOMÁTICAMENTE la primera
-   * opción del primer grupo (ver notas). El carrito guarda `stock` para limitar
-   * la cantidad en el cliente.
+   * Obtiene la lista única de categorías disponibles en los productos cargados.
+   */
+  const availableCategories = useMemo(() => {
+    const cats = new Set<string>();
+    products.forEach((p) => {
+      if (p.category_name && p.category_name.trim()) {
+        cats.add(p.category_name.trim());
+      }
+    });
+    return Array.from(cats);
+  }, [products]);
+
+  /**
+   * "Añadir rápido" desde la tarjeta.
+   * Regla de negocio crítica:
+   *  - Si el producto tiene variantes (talla, color, etc.), NO podemos elegir
+   *    a ciegas la primera opción: navegamos al detalle para que el usuario elija.
+   *  - Si no tiene stock disponible, se bloquea.
    */
   const handleQuickAdd = (e: React.MouseEvent, p: ProductCardItem) => {
     e.preventDefault();
     e.stopPropagation();
+
+    // Si tiene stock 0 o menos, no se puede añadir
+    if (p.stock !== undefined && p.stock <= 0) {
+      return;
+    }
+
+    // Si tiene variantes, llevar al cliente al detalle del producto
+    if (p.variants && Array.isArray(p.variants) && p.variants.length > 0) {
+      navigate(`/store/${storeSlug}/products/${p.id}`);
+      return;
+    }
+
     addToCart({
       productId: Number(p.id),
       name: p.name,
-      price: Number(p.price),
+      price: Number(p.price) || 0,
       image: p.images?.[0],
       quantity: 1,
-      variant: p.variants?.length ? `${p.variants[0].name}: ${p.variants[0].options[0]}` : undefined,
+      variant: undefined,
       stock: p.stock ?? 0,
     });
+
     setAddedId(Number(p.id));
-    setTimeout(() => setAddedId(null), 1500);
+    if (addedTimeoutRef.current) clearTimeout(addedTimeoutRef.current);
+    addedTimeoutRef.current = setTimeout(() => setAddedId(null), 1500);
   };
 
   /**
-   * Lista final: primero filtra por texto (nombre, descripción o SKU, sin
-   * distinguir mayúsculas) y luego ordena. `useMemo` evita recalcular si no
-   * cambian `products`, `searchQuery` ni `sortBy`. Se copia el array
-   * (`[...products]`) porque `sort` MUTA y el estado no debe mutarse.
-   * "featured" no entra en el `switch`: conserva el orden del servidor.
+   * Lista final: filtra por categoría y texto (nombre, descripción, SKU)
+   * y luego ordena según la opción elegida.
    */
   const filteredProducts = useMemo(() => {
     let list = [...products];
 
+    // Filtro por categoría
+    if (selectedCategory !== "all") {
+      list = list.filter((p) => p.category_name?.toLowerCase() === selectedCategory.toLowerCase());
+    }
+
+    // Filtro por texto de búsqueda
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase().trim();
       list = list.filter(
-        (p) => p.name.toLowerCase().includes(q) || p.description?.toLowerCase().includes(q) || p.sku?.toLowerCase().includes(q),
+        (p) =>
+          p.name.toLowerCase().includes(q) ||
+          p.description?.toLowerCase().includes(q) ||
+          p.sku?.toLowerCase().includes(q)
       );
     }
 
+    // Ordenación
     switch (sortBy) {
       case "price-asc":
-        // `price` llega como string ("25.00") por ser Decimal: se convierte.
-        list.sort((a, b) => Number(a.price) - Number(b.price));
+        list.sort((a, b) => (Number(a.price) || 0) - (Number(b.price) || 0));
         break;
       case "price-desc":
-        list.sort((a, b) => Number(b.price) - Number(a.price));
+        list.sort((a, b) => (Number(b.price) || 0) - (Number(a.price) || 0));
         break;
       case "name-asc":
-        list.sort((a, b) => a.name.localeCompare(b.name));
+        list.sort((a, b) => a.name.localeCompare(b.name, "es", { sensitivity: "base" }));
         break;
       case "name-desc":
-        list.sort((a, b) => b.name.localeCompare(a.name));
+        list.sort((a, b) => b.name.localeCompare(a.name, "es", { sensitivity: "base" }));
         break;
       case "newest":
         list.sort((a, b) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime());
@@ -159,7 +275,7 @@ export const AllProducts: React.FC = () => {
     }
 
     return list;
-  }, [products, searchQuery, sortBy]);
+  }, [products, searchQuery, sortBy, selectedCategory]);
 
   if (loading) return <Spinner fullScreen />;
 
@@ -178,12 +294,13 @@ export const AllProducts: React.FC = () => {
   }
 
   return (
-    // `getStoreAccentStyles` define las variables CSS `--store-accent` y
-    // `--store-accent-ring` que usan el buscador y los botones.
-    <div className="min-h-screen bg-white text-neutral-900 flex flex-col font-sans" style={getStoreAccentStyles(store?.accent_color)}>
+    <div
+      className="min-h-screen bg-white text-neutral-900 flex flex-col font-sans"
+      style={getStoreAccentStyles(store.accent_color)}
+    >
       <StoreNavbar store={store} />
 
-      {/* Cabecera con migas de pan. */}
+      {/* Cabecera con migas de pan */}
       <div className="border-b border-neutral-100 bg-neutral-50/50">
         <div className="max-w-6xl mx-auto px-4 sm:px-6 py-8">
           <div className="flex items-center gap-1.5 text-[11px] text-neutral-400 mb-3">
@@ -197,14 +314,47 @@ export const AllProducts: React.FC = () => {
           <div className="flex items-end justify-between gap-4">
             <div>
               <h1 className="text-2xl sm:text-3xl tracking-tight text-neutral-900">All Products</h1>
-              <p className="text-xs text-neutral-500 mt-1 max-w-xl">Browse the complete curated catalog from {store.name}.</p>
+              <p className="text-xs text-neutral-500 mt-1 max-w-xl">
+                Browse the complete curated catalog from {store.name}.
+              </p>
             </div>
           </div>
+
+          {/* Selector de categorías si la tienda tiene al menos una */}
+          {availableCategories.length > 0 && (
+            <div className="flex items-center gap-2 overflow-x-auto pb-1 mt-6 no-scrollbar">
+              <button
+                type="button"
+                onClick={() => handleCategoryChange("all")}
+                className={`px-3.5 py-1.5 rounded-full text-xs font-medium whitespace-nowrap transition cursor-pointer ${
+                  selectedCategory === "all"
+                    ? "store-accent-btn"
+                    : "bg-white border border-neutral-200 text-neutral-600 hover:bg-neutral-100"
+                }`}
+              >
+                All Categories
+              </button>
+              {availableCategories.map((cat) => (
+                <button
+                  key={cat}
+                  type="button"
+                  onClick={() => handleCategoryChange(cat)}
+                  className={`px-3.5 py-1.5 rounded-full text-xs font-medium whitespace-nowrap transition cursor-pointer ${
+                    selectedCategory.toLowerCase() === cat.toLowerCase()
+                      ? "store-accent-btn"
+                      : "bg-white border border-neutral-200 text-neutral-600 hover:bg-neutral-100"
+                  }`}
+                >
+                  {cat}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
       </div>
 
       <main className="max-w-6xl mx-auto px-4 sm:px-6 py-8 w-full flex-1">
-        {/* Buscador y selector de orden. */}
+        {/* Buscador y selector de orden */}
         <div className="flex flex-col sm:flex-row sm:justify-between items-stretch sm:items-center gap-3 mb-6">
           <div className="relative flex-1 max-w-sm">
             <Search className="w-4 h-4 text-neutral-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
@@ -212,14 +362,13 @@ export const AllProducts: React.FC = () => {
               type="text"
               placeholder="Search products..."
               value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
+              onChange={(e) => handleSearchChange(e.target.value)}
               className="w-full pl-9 pr-8 py-2 text-xs border border-neutral-200 rounded-full focus:outline-none focus:border-(--store-accent) focus:ring-1 focus:ring-(--store-accent-ring) bg-neutral-50/50"
             />
-            {/* Botón "X" para borrar la búsqueda: solo aparece si hay texto. */}
             {searchQuery && (
               <button
                 type="button"
-                onClick={() => setSearchQuery("")}
+                onClick={() => handleSearchChange("")}
                 className="absolute right-3 top-1/2 -translate-y-1/2 text-neutral-400 hover:text-neutral-700 p-0.5"
               >
                 <X className="w-3.5 h-3.5" />
@@ -231,7 +380,7 @@ export const AllProducts: React.FC = () => {
             <ArrowUpDown className="w-3.5 h-3.5 text-neutral-400" />
             <select
               value={sortBy}
-              onChange={(e) => setSortBy(e.target.value)}
+              onChange={(e) => handleSortChange(e.target.value)}
               className="bg-transparent text-neutral-700 text-xs font-medium focus:outline-none cursor-pointer"
             >
               {SORT_OPTIONS.map(({ value, label }) => (
@@ -243,7 +392,7 @@ export const AllProducts: React.FC = () => {
           </div>
         </div>
 
-        {/* Rejilla de productos, o mensaje de "sin resultados". */}
+        {/* Rejilla de productos o mensaje sin resultados */}
         {filteredProducts.length > 0 ? (
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4 items-start sm:gap-6 xl:mb-40">
             {filteredProducts.map((p) => (
@@ -259,7 +408,22 @@ export const AllProducts: React.FC = () => {
         ) : (
           <div className="py-20 xl:py-32 text-center flex flex-col items-center justify-center">
             <h2 className="text-sm font-medium text-neutral-900 mb-1">No products found</h2>
-            <p className="text-xs text-neutral-500 max-w-xs">Try a different search term or browse all categories.</p>
+            <p className="text-xs text-neutral-500 max-w-xs mb-3">
+              Try a different search term or browse all categories.
+            </p>
+            {(searchQuery || selectedCategory !== "all") && (
+              <button
+                type="button"
+                onClick={() => {
+                  setSearchQuery("");
+                  setSelectedCategory("all");
+                  updateParams("", sortBy, "all");
+                }}
+                className="px-4 py-1.5 bg-neutral-100 hover:bg-neutral-200 text-neutral-700 text-xs rounded-full transition"
+              >
+                Clear all filters
+              </button>
+            )}
           </div>
         )}
       </main>
