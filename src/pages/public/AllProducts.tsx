@@ -9,6 +9,12 @@ import { Spinner } from "../../components/common/Spinner";
 import { getStoreAccentStyles } from "../../utils/storeAccent";
 import { api } from "../../config/api";
 
+/**
+ * Opciones del selector de orden. `value` es lo que se guarda en el estado y
+ * en la URL (?sort=...); `label` es el texto que ve el cliente.
+ * "featured" es el orden por defecto: no reordena, deja el del servidor
+ * (más recientes primero, según la function pública de Neon).
+ */
 const SORT_OPTIONS = [
   { value: "featured", label: "Featured" },
   { value: "newest", label: "Newest First" },
@@ -18,9 +24,25 @@ const SORT_OPTIONS = [
   { value: "name-desc", label: "Name: Z to A" },
 ];
 
+/**
+ * Página pública "Todos los productos" de una tienda: catálogo completo con
+ * buscador y ordenación. Ruta esperada: algo como `/store/:storeSlug/products`.
+ *
+ * Es la parte PÚBLICA (clientes), a diferencia de `ProductsPage` (comerciante).
+ * Consume dos endpoints de la function pública de Neon (solo lectura):
+ *  - `GET /stores/slug/:slug`                   → datos de la tienda.
+ *  - `GET /products?storeSlug=&status=active`   → productos activos.
+ *
+ * La búsqueda y la ordenación se hacen EN EL CLIENTE sobre la lista ya
+ * cargada, y se reflejan en la URL (`?q=` y `?sort=`) para poder compartir
+ * o recargar la vista.
+ */
 export const AllProducts: React.FC = () => {
   const { storeSlug } = useParams<{ storeSlug: string }>();
+  // Parámetros de la URL: `?q=` (búsqueda) y `?sort=` (orden).
   const [searchParams, setSearchParams] = useSearchParams();
+  // `setStoreSlug` le dice al carrito de qué tienda es (un carrito por tienda);
+  // `addToCart` añade líneas.
   const { setStoreSlug, addToCart } = useCart();
 
   const [store, setStore] = useState<any>(null);
@@ -28,11 +50,15 @@ export const AllProducts: React.FC = () => {
   const [products, setProducts] = useState<ProductCardItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // Id del producto recién añadido: sirve para mostrar el feedback "Added" 1,5 s.
   const [addedId, setAddedId] = useState<number | null>(null);
 
+  // Los filtros se inicializan desde la URL: abrir un enlace con `?q=taza`
+  // ya aplica la búsqueda.
   const [searchQuery, setSearchQuery] = useState(searchParams.get("q") || "");
   const [sortBy, setSortBy] = useState(searchParams.get("sort") || "featured");
 
+  // Al cambiar de tienda: registra el slug en el carrito y recarga los datos.
   useEffect(() => {
     if (storeSlug) {
       setStoreSlug(storeSlug);
@@ -40,6 +66,12 @@ export const AllProducts: React.FC = () => {
     }
   }, [storeSlug]);
 
+  /**
+   * Carga tienda y productos EN PARALELO (`Promise.all`). Si cualquiera falla,
+   * se muestra la pantalla "Catalog Unavailable" con el mensaje del servidor
+   * (la function responde 403 si la tienda está suspendida y 404 si no existe).
+   * Se pide `status=active` para que el cliente no vea borradores ni archivados.
+   */
   const fetchInitialData = async (slug: string) => {
     setLoading(true);
     setError(null);
@@ -57,6 +89,9 @@ export const AllProducts: React.FC = () => {
     }
   };
 
+  // Sincroniza búsqueda y orden con la URL. Solo se escriben los valores que
+  // no son los de por defecto (URL limpia). `replace: true` evita llenar el
+  // historial con una entrada por cada tecla.
   useEffect(() => {
     const params: Record<string, string> = {};
     if (searchQuery.trim()) params.q = searchQuery.trim();
@@ -64,6 +99,13 @@ export const AllProducts: React.FC = () => {
     setSearchParams(params, { replace: true });
   }, [searchQuery, sortBy, setSearchParams]);
 
+  /**
+   * "Añadir rápido" desde la tarjeta, sin entrar al detalle. `preventDefault`
+   * y `stopPropagation` evitan que el clic navegue (la tarjeta es un enlace).
+   * Si el producto tiene variantes, se elige AUTOMÁTICAMENTE la primera
+   * opción del primer grupo (ver notas). El carrito guarda `stock` para limitar
+   * la cantidad en el cliente.
+   */
   const handleQuickAdd = (e: React.MouseEvent, p: ProductCardItem) => {
     e.preventDefault();
     e.stopPropagation();
@@ -80,6 +122,13 @@ export const AllProducts: React.FC = () => {
     setTimeout(() => setAddedId(null), 1500);
   };
 
+  /**
+   * Lista final: primero filtra por texto (nombre, descripción o SKU, sin
+   * distinguir mayúsculas) y luego ordena. `useMemo` evita recalcular si no
+   * cambian `products`, `searchQuery` ni `sortBy`. Se copia el array
+   * (`[...products]`) porque `sort` MUTA y el estado no debe mutarse.
+   * "featured" no entra en el `switch`: conserva el orden del servidor.
+   */
   const filteredProducts = useMemo(() => {
     let list = [...products];
 
@@ -92,6 +141,7 @@ export const AllProducts: React.FC = () => {
 
     switch (sortBy) {
       case "price-asc":
+        // `price` llega como string ("25.00") por ser Decimal: se convierte.
         list.sort((a, b) => Number(a.price) - Number(b.price));
         break;
       case "price-desc":
@@ -113,6 +163,7 @@ export const AllProducts: React.FC = () => {
 
   if (loading) return <Spinner fullScreen />;
 
+  // Error o tienda no cargada: pantalla de aviso con enlace a la home.
   if (error || !store) {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center bg-white p-4 text-center">
@@ -127,13 +178,14 @@ export const AllProducts: React.FC = () => {
   }
 
   return (
+    // `getStoreAccentStyles` define las variables CSS `--store-accent` y
+    // `--store-accent-ring` que usan el buscador y los botones.
     <div className="min-h-screen bg-white text-neutral-900 flex flex-col font-sans" style={getStoreAccentStyles(store?.accent_color)}>
       <StoreNavbar store={store} />
 
-      {/* Header */}
+      {/* Cabecera con migas de pan. */}
       <div className="border-b border-neutral-100 bg-neutral-50/50">
         <div className="max-w-6xl mx-auto px-4 sm:px-6 py-8">
-          {/* Breadcrumb */}
           <div className="flex items-center gap-1.5 text-[11px] text-neutral-400 mb-3">
             <Link to={`/store/${store.slug}`} className="hover:text-neutral-900 transition">
               Home
@@ -152,9 +204,8 @@ export const AllProducts: React.FC = () => {
       </div>
 
       <main className="max-w-6xl mx-auto px-4 sm:px-6 py-8 w-full flex-1">
-        {/* Search & Sort */}
+        {/* Buscador y selector de orden. */}
         <div className="flex flex-col sm:flex-row sm:justify-between items-stretch sm:items-center gap-3 mb-6">
-          {/* Search */}
           <div className="relative flex-1 max-w-sm">
             <Search className="w-4 h-4 text-neutral-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
             <input
@@ -164,6 +215,7 @@ export const AllProducts: React.FC = () => {
               onChange={(e) => setSearchQuery(e.target.value)}
               className="w-full pl-9 pr-8 py-2 text-xs border border-neutral-200 rounded-full focus:outline-none focus:border-(--store-accent) focus:ring-1 focus:ring-(--store-accent-ring) bg-neutral-50/50"
             />
+            {/* Botón "X" para borrar la búsqueda: solo aparece si hay texto. */}
             {searchQuery && (
               <button
                 type="button"
@@ -175,7 +227,6 @@ export const AllProducts: React.FC = () => {
             )}
           </div>
 
-          {/* Sort */}
           <div className="flex items-center gap-1.5 bg-white border border-neutral-200 rounded-full px-3 py-2 text-xs self-start sm:self-auto">
             <ArrowUpDown className="w-3.5 h-3.5 text-neutral-400" />
             <select
@@ -192,7 +243,7 @@ export const AllProducts: React.FC = () => {
           </div>
         </div>
 
-        {/* Products Grid */}
+        {/* Rejilla de productos, o mensaje de "sin resultados". */}
         {filteredProducts.length > 0 ? (
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4 items-start sm:gap-6 xl:mb-40">
             {filteredProducts.map((p) => (
