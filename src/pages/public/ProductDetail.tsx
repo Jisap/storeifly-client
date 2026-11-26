@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useRef } from "react";
 import { useParams, Link, useNavigate } from "react-router-dom";
 import { StoreNavbar } from "../../components/StoreNavbar";
 import { StoreFooter } from "../../components/StoreFooter";
@@ -12,89 +12,147 @@ import { ProductReviews } from "../../components/public/product-detail/ProductRe
 import { RelatedProducts } from "../../components/public/product-detail/RelatedProducts";
 import { getStoreAccentStyles } from "../../utils/storeAccent";
 import { api } from "../../config/api";
+import type { PublicStore } from "./AllProducts";
 
 /**
  * Página de detalle de producto dentro de una tienda pública.
- * Gestiona la carga del producto, tienda y productos relacionados,
- * así como la selección de variantes, cantidad y adición al carrito.
+ *
+ * Flujo y robustez:
+ *  - Carga el producto y la tienda de Neon Functions de forma segura.
+ *  - La petición de productos relacionados es independiente para que un error
+ *    secundario nunca impida ver y comprar el producto principal.
+ *  - Sincroniza variantes, cantidad seleccionada (con límite de stock) y moneda de la tienda.
+ *  - Maneja cancelación de peticiones asíncronas para evitar race conditions al cambiar de producto.
+ *  - Retorno directo al catálogo completo de la tienda (`/store/:storeSlug/products`).
  */
 export const ProductDetail: React.FC = () => {
   const { storeSlug, productId } = useParams<{ storeSlug: string; productId: string }>();
   const { addToCart, setStoreSlug } = useCart();
   const navigate = useNavigate();
 
-  // --- ESTADOS DE DATOS Y UI ---
-  // Nota: Se recomienda definir interfaces `Product`, `Store` y `RelatedProduct` para reemplazar `any`
+  // Estados de datos
   const [product, setProduct] = useState<any>(null);
-  const [store, setStore] = useState<any>(null);
+  const [store, setStore] = useState<PublicStore | null>(null);
   const [relatedProducts, setRelatedProducts] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // --- ESTADOS DE INTERACCIÓN DEL USUARIO ---
+  // Estados de interacción del usuario
   const [selectedImage, setSelectedImage] = useState("");
-  // Mapa de variante -> opción seleccionada (ej. { "Color": "Red", "Size": "M" })
   const [selectedVariants, setSelectedVariants] = useState<Record<string, string>>({});
   const [quantity, setQuantity] = useState(1);
 
   // Feedback visual temporal tras añadir al carrito
   const [added, setAdded] = useState(false);
+  const addedTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Sincroniza el slug con el contexto del carrito y recarga los datos cuando cambian los parámetros de la URL
+  // Limpieza del temporizador al desmontar
   useEffect(() => {
-    if (storeSlug) setStoreSlug(storeSlug);
-    fetchProduct();
-  }, [productId, storeSlug]);
+    return () => {
+      if (addedTimeoutRef.current) {
+        clearTimeout(addedTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  // Carga de producto y tienda con protección contra race conditions
+  useEffect(() => {
+    if (!storeSlug || !productId) return;
+    setStoreSlug(storeSlug);
+
+    let cancelled = false;
+
+    const fetchProductData = async () => {
+      setLoading(true);
+      // Reinicia estados de interacción para el nuevo producto
+      setQuantity(1);
+      setSelectedImage("");
+
+      try {
+        // Carga principal: producto y tienda
+        const [prodRes, storeRes] = await Promise.all([
+          api.get(`/api/products/${encodeURIComponent(productId)}`),
+          api.get(`/api/stores/slug/${encodeURIComponent(storeSlug)}`),
+        ]);
+
+        if (cancelled) return;
+
+        if (prodRes.data?.success && prodRes.data.product) {
+          const prod = prodRes.data.product;
+          setProduct(prod);
+          setSelectedImage(prod.images?.[0] ?? "");
+
+          // Variantes por defecto (primera opción de cada grupo)
+          const defaults: Record<string, string> = {};
+          prod.variants?.forEach((v: any) => {
+            if (v.name && v.options?.length) defaults[v.name] = v.options[0];
+          });
+          setSelectedVariants(defaults);
+        } else {
+          setProduct(null);
+        }
+
+        if (storeRes.data?.success && storeRes.data.store) {
+          const s = storeRes.data.store;
+          setStore({
+            ...s,
+            id: s.id ? Number(s.id) : undefined,
+            description: s.description ?? undefined,
+            logo_url: s.logo_url ?? undefined,
+            banner_url: s.banner_url ?? undefined,
+            accent_color: s.accent_color ?? undefined,
+          });
+        }
+
+        // Carga secundaria: productos relacionados (no bloqueante)
+        api
+          .get(`/api/products?storeSlug=${encodeURIComponent(storeSlug)}&status=active`)
+          .then((relRes) => {
+            if (!cancelled && relRes.data?.success && Array.isArray(relRes.data.products)) {
+              setRelatedProducts(
+                relRes.data.products
+                  .filter((p: any) => String(p.id) !== String(productId))
+                  .slice(0, 4)
+              );
+            }
+          })
+          .catch(() => {
+            // Un fallo en los productos relacionados no debe interrumpir la navegación
+            if (!cancelled) setRelatedProducts([]);
+          });
+
+      } catch (error: unknown) {
+        if (!cancelled) {
+          console.error("Error loading product:", error);
+          setProduct(null);
+        }
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      }
+    };
+
+    fetchProductData();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [productId, storeSlug, setStoreSlug]);
 
   /**
-   * Carga en paralelo los datos del producto, la tienda y los productos activos de la misma.
-   * También inicializa las variantes por defecto (primera opción de cada variante disponible).
-   */
-  const fetchProduct = async () => {
-    setLoading(true);
-    try {
-      const [prodRes, storeRes, relRes] = await Promise.all([
-        api.get(`/api/products/${productId}`),
-        api.get(`/api/stores/slug/${storeSlug}`),
-        api.get(`/api/products?storeSlug=${storeSlug}&status=active`),
-      ]);
-
-      if (prodRes.data?.success) {
-        const prod = prodRes.data.product;
-        setProduct(prod);
-        setSelectedImage(prod.images?.[0] ?? "");
-
-        // Construye las variantes por defecto tomando la primera opción de cada grupo
-        const defaults: Record<string, string> = {};
-        prod.variants?.forEach((v: any) => {
-          if (v.name && v.options?.length) defaults[v.name] = v.options[0];
-        });
-        setSelectedVariants(defaults);
-      }
-
-      if (storeRes.data?.success) setStore(storeRes.data.store);
-
-      if (relRes.data?.success) {
-        // Filtra el producto actual y limita a 4 productos relacionados
-        setRelatedProducts(
-          relRes.data.products
-            .filter((p: any) => String(p.id) !== String(productId))
-            .slice(0, 4)
-        );
-      }
-    } catch (error: any) {
-      console.error(error);
-      toast.error("Failed to load product details");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  /**
-   * Construye la cadena de variantes seleccionadas y añade el producto al carrito.
-   * Formato resultante: "Color: Red / Size: M"
+   * Valida stock y añade el producto al carrito con variantes y cantidad elegidas.
    */
   const handleAddToCart = () => {
     if (!product) return;
+
+    // Validación de stock
+    if (product.stock !== undefined && product.stock <= 0) {
+      toast.error("This product is currently out of stock.");
+      return;
+    }
+
+    const availableStock = typeof product.stock === "number" ? product.stock : 99;
+    const finalQuantity = Math.max(1, Math.min(quantity, availableStock));
 
     const variant =
       Object.entries(selectedVariants)
@@ -102,42 +160,46 @@ export const ProductDetail: React.FC = () => {
         .join(" / ") || undefined;
 
     addToCart({
-      productId: product.id,
+      productId: Number(product.id),
       name: product.name,
-      price: Number(product.price),
+      price: Number(product.price) || 0,
       image: selectedImage || product.images?.[0],
-      quantity,
+      quantity: finalQuantity,
       variant,
-      stock: product.stock,
+      stock: product.stock ?? 0,
     });
 
-    // Activa el feedback visual temporal
     setAdded(true);
-    toast.success(`Added ${quantity} to cart!`);
-    setTimeout(() => setAdded(false), 2000);
+    toast.success(`Added ${finalQuantity} to cart!`);
+
+    if (addedTimeoutRef.current) clearTimeout(addedTimeoutRef.current);
+    addedTimeoutRef.current = setTimeout(() => setAdded(false), 2000);
   };
 
   // --- RENDERIZADO CONDICIONAL ---
 
   if (loading) return <Spinner fullScreen />;
 
-  if (!product)
+  if (!product) {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center bg-white p-4">
         <AlertCircle className="w-10 h-10 text-neutral-400 mb-3" />
         <h2 className="text-base font-semibold text-neutral-900">Product not found</h2>
+        <p className="text-xs text-neutral-500 mt-1 max-w-sm text-center">
+          The requested product may have been removed or is temporarily unavailable.
+        </p>
         <Link
-          to={`/store/${storeSlug}`}
-          className="mt-4 px-3.5 py-1.5 bg-neutral-900 text-white text-xs font-medium rounded-md hover:bg-black transition"
+          to={`/store/${storeSlug}/products`}
+          className="mt-4 px-4 py-2 bg-neutral-900 text-white text-xs font-medium rounded-full hover:bg-black transition"
         >
-          Back to Store
+          Back to Catalog
         </Link>
       </div>
     );
+  }
 
   // --- RENDERIZADO PRINCIPAL ---
   return (
-    // Aplica variables CSS dinámicas basadas en el color de acento de la tienda
     <div
       className="min-h-screen bg-neutral-50 text-neutral-900 flex flex-col font-sans"
       style={getStoreAccentStyles(store?.accent_color)}
@@ -145,16 +207,16 @@ export const ProductDetail: React.FC = () => {
       {store && <StoreNavbar store={store} />}
 
       <main className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8 w-full flex-1">
-
-        {/* Navegación de retorno al catálogo */}
+        {/* Navegación directa de retorno al catálogo de productos */}
         <button
-          onClick={() => navigate(`/store/${storeSlug}`)}
+          type="button"
+          onClick={() => navigate(`/store/${storeSlug}/products`)}
           className="inline-flex items-center gap-1.5 text-xs font-medium text-neutral-500 hover:text-neutral-900 mb-6 transition cursor-pointer"
         >
           <ArrowLeft className="w-3.5 h-3.5" /> Back to Catalog
         </button>
 
-        {/* Sección principal del producto: galería, variantes, precio y CTA */}
+        {/* Sección principal del producto: galería, variantes, cantidad, precio y CTA */}
         <ProductOverview
           product={product}
           selectedImage={selectedImage}
@@ -166,6 +228,7 @@ export const ProductDetail: React.FC = () => {
           onAddToCart={handleAddToCart}
           added={added}
           storeSlug={storeSlug || ""}
+          currency={store?.currency || "USD"}
         />
 
         {/* Secciones informativas adicionales del producto */}
@@ -173,20 +236,20 @@ export const ProductDetail: React.FC = () => {
         <ProductReviews />
         <RelatedProducts products={relatedProducts} storeSlug={storeSlug || ""} />
 
-        {/* CTA secundario para consultas personalizadas o corporativas */}
-        <div className="mt-14 bg-neutral-50 rounded-3xl sm:rounded-4xl border border-neutral-200 p-8 sm:p-10 flex flex-col md:flex-row items-start md:items-center justify-between gap-6">
+        {/* CTA secundario para consultas */}
+        <div className="mt-14 bg-white rounded-3xl sm:rounded-4xl border border-neutral-200/80 p-8 sm:p-10 flex flex-col md:flex-row items-start md:items-center justify-between gap-6 shadow-xs">
           <div className="space-y-2">
             <h4 className="text-xl sm:text-2xl text-neutral-900">Need sizing assistance or a custom order?</h4>
             <p className="text-xs sm:text-sm text-neutral-500 max-w-lg leading-relaxed">
-              Our team is available for specifications, bespoke variations, and corporate gifting.
+              Our team at {store?.name || "the store"} is available for custom specifications, bulk orders, and gifting inquiries.
             </p>
           </div>
           <button
             type="button"
-            onClick={() => toast.success("Our team will assist you shortly.")}
-            className="px-9 py-3 bg-black hover:bg-neutral-800 text-white text-sm font-medium rounded-full transition flex items-center gap-2 shrink-0 cursor-pointer"
+            onClick={() => toast.success("Thank you for reaching out! We will contact you soon.")}
+            className="px-8 py-3 bg-neutral-900 hover:bg-black text-white text-xs font-semibold rounded-full transition flex items-center gap-2 shrink-0 cursor-pointer"
           >
-            <Mail className="w-3.5 h-3.5" /> Inquire with Studio
+            <Mail className="w-3.5 h-3.5" /> Inquire with Store
           </button>
         </div>
       </main>
