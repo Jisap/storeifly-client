@@ -13,25 +13,42 @@ import { RelatedProducts } from "../../components/public/product-detail/RelatedP
 import { getStoreAccentStyles } from "../../utils/storeAccent";
 import { api } from "../../config/api";
 
+/**
+ * Página de detalle de producto dentro de una tienda pública.
+ * Gestiona la carga del producto, tienda y productos relacionados,
+ * así como la selección de variantes, cantidad y adición al carrito.
+ */
 export const ProductDetail: React.FC = () => {
   const { storeSlug, productId } = useParams<{ storeSlug: string; productId: string }>();
   const { addToCart, setStoreSlug } = useCart();
   const navigate = useNavigate();
 
+  // --- ESTADOS DE DATOS Y UI ---
+  // Nota: Se recomienda definir interfaces `Product`, `Store` y `RelatedProduct` para reemplazar `any`
   const [product, setProduct] = useState<any>(null);
   const [store, setStore] = useState<any>(null);
   const [relatedProducts, setRelatedProducts] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+
+  // --- ESTADOS DE INTERACCIÓN DEL USUARIO ---
   const [selectedImage, setSelectedImage] = useState("");
+  // Mapa de variante -> opción seleccionada (ej. { "Color": "Red", "Size": "M" })
   const [selectedVariants, setSelectedVariants] = useState<Record<string, string>>({});
   const [quantity, setQuantity] = useState(1);
+
+  // Feedback visual temporal tras añadir al carrito
   const [added, setAdded] = useState(false);
 
+  // Sincroniza el slug con el contexto del carrito y recarga los datos cuando cambian los parámetros de la URL
   useEffect(() => {
     if (storeSlug) setStoreSlug(storeSlug);
     fetchProduct();
   }, [productId, storeSlug]);
 
+  /**
+   * Carga en paralelo los datos del producto, la tienda y los productos activos de la misma.
+   * También inicializa las variantes por defecto (primera opción de cada variante disponible).
+   */
   const fetchProduct = async () => {
     setLoading(true);
     try {
@@ -45,6 +62,8 @@ export const ProductDetail: React.FC = () => {
         const prod = prodRes.data.product;
         setProduct(prod);
         setSelectedImage(prod.images?.[0] ?? "");
+
+        // Construye las variantes por defecto tomando la primera opción de cada grupo
         const defaults: Record<string, string> = {};
         prod.variants?.forEach((v: any) => {
           if (v.name && v.options?.length) defaults[v.name] = v.options[0];
@@ -55,22 +74,33 @@ export const ProductDetail: React.FC = () => {
       if (storeRes.data?.success) setStore(storeRes.data.store);
 
       if (relRes.data?.success) {
-        setRelatedProducts(relRes.data.products.filter((p: any) => String(p.id) !== String(productId)).slice(0, 4));
+        // Filtra el producto actual y limita a 4 productos relacionados
+        setRelatedProducts(
+          relRes.data.products
+            .filter((p: any) => String(p.id) !== String(productId))
+            .slice(0, 4)
+        );
       }
     } catch (error: any) {
       console.error(error);
-      toast.error("Failed to load product details")
+      toast.error("Failed to load product details");
     } finally {
       setLoading(false);
     }
   };
 
+  /**
+   * Construye la cadena de variantes seleccionadas y añade el producto al carrito.
+   * Formato resultante: "Color: Red / Size: M"
+   */
   const handleAddToCart = () => {
     if (!product) return;
+
     const variant =
       Object.entries(selectedVariants)
         .map(([k, v]) => `${k}: ${v}`)
         .join(" / ") || undefined;
+
     addToCart({
       productId: product.id,
       name: product.name,
@@ -80,10 +110,14 @@ export const ProductDetail: React.FC = () => {
       variant,
       stock: product.stock,
     });
+
+    // Activa el feedback visual temporal
     setAdded(true);
     toast.success(`Added ${quantity} to cart!`);
     setTimeout(() => setAdded(false), 2000);
   };
+
+  // --- RENDERIZADO CONDICIONAL ---
 
   if (loading) return <Spinner fullScreen />;
 
@@ -101,7 +135,9 @@ export const ProductDetail: React.FC = () => {
       </div>
     );
 
+  // --- RENDERIZADO PRINCIPAL ---
   return (
+    // Aplica variables CSS dinámicas basadas en el color de acento de la tienda
     <div
       className="min-h-screen bg-neutral-50 text-neutral-900 flex flex-col font-sans"
       style={getStoreAccentStyles(store?.accent_color)}
@@ -109,6 +145,8 @@ export const ProductDetail: React.FC = () => {
       {store && <StoreNavbar store={store} />}
 
       <main className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8 w-full flex-1">
+
+        {/* Navegación de retorno al catálogo */}
         <button
           onClick={() => navigate(`/store/${storeSlug}`)}
           className="inline-flex items-center gap-1.5 text-xs font-medium text-neutral-500 hover:text-neutral-900 mb-6 transition cursor-pointer"
@@ -116,6 +154,7 @@ export const ProductDetail: React.FC = () => {
           <ArrowLeft className="w-3.5 h-3.5" /> Back to Catalog
         </button>
 
+        {/* Sección principal del producto: galería, variantes, precio y CTA */}
         <ProductOverview
           product={product}
           selectedImage={selectedImage}
@@ -129,10 +168,12 @@ export const ProductDetail: React.FC = () => {
           storeSlug={storeSlug || ""}
         />
 
+        {/* Secciones informativas adicionales del producto */}
         <ProductSpecs />
         <ProductReviews />
         <RelatedProducts products={relatedProducts} storeSlug={storeSlug || ""} />
 
+        {/* CTA secundario para consultas personalizadas o corporativas */}
         <div className="mt-14 bg-neutral-50 rounded-3xl sm:rounded-4xl border border-neutral-200 p-8 sm:p-10 flex flex-col md:flex-row items-start md:items-center justify-between gap-6">
           <div className="space-y-2">
             <h4 className="text-xl sm:text-2xl text-neutral-900">Need sizing assistance or a custom order?</h4>
