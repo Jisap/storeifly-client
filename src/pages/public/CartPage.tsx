@@ -10,31 +10,49 @@ import { CartSummarySidebar } from "../../components/public/cart/CartSummarySide
 import { getStoreAccentStyles } from "../../utils/storeAccent";
 import { api } from "../../config/api";
 
+/**
+ * Página del carrito de compras de una tienda pública.
+ * Muestra los productos añadidos, calcula los costos de envío según las reglas de la tienda
+ * y presenta un resumen con el total estimado antes del checkout.
+ */
 export const CartPage: React.FC = () => {
   const { storeSlug } = useParams<{ storeSlug: string }>();
   const { cart, updateQuantity, removeFromCart, subtotal, setStoreSlug } = useCart();
   const navigate = useNavigate();
 
+  // Nota: Se recomienda definir una interfaz `Store` para reemplazar `any`
   const [store, setStore] = useState<any>(null);
   const [loading, setLoading] = useState(true);
 
+  // Sincroniza el slug con el contexto del carrito y carga la configuración de la tienda
   useEffect(() => {
     if (!storeSlug) return;
     setStoreSlug(storeSlug);
-    api.get(`/api/stores/slug/${encodeURIComponent(storeSlug)}`).then((res) => {
-      if (res.data?.success) setStore(res.data.store);
-    }).catch((err) => { console.error("Failed to fetch store:", err) }).finally(() => setLoading(false))
+
+    api.get(`/api/stores/slug/${encodeURIComponent(storeSlug)}`)
+      .then((res) => {
+        if (res.data?.success) setStore(res.data.store);
+      })
+      .catch((err) => {
+        console.error("Failed to fetch store:", err);
+      })
+      .finally(() => setLoading(false));
   }, [storeSlug]);
 
   if (loading) return <Spinner fullScreen />;
 
+  // --- CÁLCULOS DE ENVÍO Y TOTAL ---
+  // Se obtienen los umbrales de envío gratuito y la tarifa base desde la configuración de la tienda
   const freeThreshold = store ? Number(store.free_shipping_threshold) || 0 : 0;
   const shippingFee = store ? Number(store.shipping_fee) || 0 : 0;
+
+  // Determina si el subtotal actual califica para envío gratuito
   const isFreeShipping = freeThreshold > 0 && subtotal >= freeThreshold;
   const estimatedShipping = isFreeShipping ? 0 : shippingFee;
   const estimatedTotal = subtotal + estimatedShipping;
 
   return (
+    // Aplica variables CSS dinámicas basadas en el color de acento de la tienda
     <div
       className="min-h-screen bg-neutral-50/60 text-neutral-900 flex flex-col font-sans"
       style={getStoreAccentStyles(store?.accent_color)}
@@ -42,7 +60,8 @@ export const CartPage: React.FC = () => {
       {store && <StoreNavbar store={store} />}
 
       <main className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-10 w-full flex-1">
-        {/* Back navigation */}
+
+        {/* Navegación de retorno al catálogo */}
         <button
           type="button"
           onClick={() => navigate(`/store/${storeSlug}`)}
@@ -52,7 +71,7 @@ export const CartPage: React.FC = () => {
           <span>Continue Shopping</span>
         </button>
 
-        {/* Page Title */}
+        {/* Encabezado con título y contador de items */}
         <div className="flex items-center justify-between mb-8">
           <h1 className="text-2xl sm:text-3xl text-neutral-900">Shopping Cart</h1>
           <span className="text-xs font-mono text-neutral-500 bg-neutral-100 px-3 py-1 rounded-full">
@@ -61,7 +80,7 @@ export const CartPage: React.FC = () => {
         </div>
 
         {cart.length === 0 ? (
-          /* Empty Cart State */
+          /* --- ESTADO: Carrito vacío --- */
           <div className="bg-white rounded-3xl sm:rounded-4xl border border-neutral-200 p-12 sm:p-16 text-center max-w-3xl my-20 mx-auto">
             <div className="flex items-center justify-center mx-auto mb-6 text-neutral-400">
               <ShoppingBag className="w-12 h-12" />
@@ -79,9 +98,10 @@ export const CartPage: React.FC = () => {
             </Link>
           </div>
         ) : (
-          /* Cart Grid Layout */
+          /* --- ESTADO: Carrito con productos --- */
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
-            {/* Cart Items List */}
+
+            {/* Columna izquierda: Progreso de envío y lista de productos (7/12 columnas) */}
             <div className="lg:col-span-7 space-y-4">
               <CartShippingProgress freeThreshold={freeThreshold} subtotal={subtotal} />
 
@@ -93,7 +113,7 @@ export const CartPage: React.FC = () => {
               />
             </div>
 
-            {/* Summary & Checkout Sidebar */}
+            {/* Columna derecha: Resumen y checkout (5/12 columnas), sticky al hacer scroll */}
             <div className="lg:col-span-5 sticky top-24">
               <CartSummarySidebar
                 subtotal={subtotal}
