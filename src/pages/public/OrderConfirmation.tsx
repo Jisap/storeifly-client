@@ -5,24 +5,44 @@ import { ArrowRight, ShoppingBag } from "lucide-react";
 import { getStoreAccentStyles } from "../../utils/storeAccent";
 import { api } from "../../config/api";
 
+/**
+ * Página de Confirmación de Pedido (Order Confirmation).
+ * Muestra el recibo detallado de una orden completada, incluyendo el estado del pedido,
+ * lista de artículos, desglose de precios y datos de envío/pago.
+ */
 export const OrderConfirmation: React.FC = () => {
   const { storeSlug, orderNumber } = useParams<{ storeSlug: string; orderNumber: string }>();
+
+  // Nota: Se recomienda definir una interfaz `Order` para reemplazar `any`
   const [order, setOrder] = useState<any>(null);
   const [loading, setLoading] = useState(true);
 
+  // Obtiene los detalles del recibo de la orden usando el orderNumber de la URL
   useEffect(() => {
     if (!orderNumber) {
       setLoading(false);
       return;
     }
-    api.get(`/api/orders/receipt/${encodeURIComponent(orderNumber)}`).then((res) => { if (res.data?.success) setOrder(res.data.order); }).catch((err) => console.error("Failed to fetch order receipt:", err)).finally(() => setLoading(false));
+    api.get(`/api/orders/receipt/${encodeURIComponent(orderNumber)}`)
+      .then((res) => {
+        if (res.data?.success) setOrder(res.data.order);
+      })
+      .catch((err) => {
+        console.error("Failed to fetch order receipt:", err);
+      })
+      .finally(() => setLoading(false));
   }, [orderNumber]);
 
-  if (loading)
+  // --- RENDERIZADO CONDICIONAL INICIAL ---
+  if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-50 text-gray-500 text-sm">Loading order receipt...</div>
+      <div className="min-h-screen flex items-center justify-center bg-gray-50 text-gray-500 text-sm">
+        Loading order receipt...
+      </div>
     );
-  if (!order)
+  }
+
+  if (!order) {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center bg-gray-50 p-4 text-center">
         <h2 className="text-xl font-bold text-gray-900 mb-2">Order Not Found</h2>
@@ -31,9 +51,14 @@ export const OrderConfirmation: React.FC = () => {
         </Link>
       </div>
     );
+  }
 
+  // --- PREPARACIÓN DE DATOS PARA LA UI ---
+  // Se asegura de que los datos tengan fallbacks seguros (arrays/objetos vacíos) para evitar errores de renderizado
   const items = Array.isArray(order.items) ? order.items : [];
   const addr = order.shipping_address || {};
+
+  // Construye un objeto de tienda mínimo necesario para el Navbar y los estilos de acento
   const store = {
     name: order.store_name,
     slug: order.store_slug,
@@ -42,13 +67,16 @@ export const OrderConfirmation: React.FC = () => {
   };
 
   return (
+    // Aplica variables CSS dinámicas basadas en el color de acento de la tienda
     <div
       className="min-h-screen text-neutral-900 flex flex-col font-sans"
       style={getStoreAccentStyles(order.store_accent_color)}
     >
       <StoreNavbar store={store} />
+
       <main className="max-w-3xl mx-auto px-4 sm:px-6 py-10 w-full flex-1">
-        {/* Header */}
+
+        {/* --- ENCABEZADO --- */}
         <div className="text-center mb-8">
           <h1 className="text-2xl font-medium tracking-tight text-neutral-900">Thank you for your order</h1>
           <p className="text-xs text-neutral-500 mt-1">We've received your order and are getting it ready for shipment.</p>
@@ -57,7 +85,7 @@ export const OrderConfirmation: React.FC = () => {
           </div>
         </div>
 
-        {/* Status */}
+        {/* --- ESTADO Y SEGUIMIENTO --- */}
         <div className="bg-white rounded-md border border-neutral-200 p-5 mb-5">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
             <div>
@@ -77,11 +105,13 @@ export const OrderConfirmation: React.FC = () => {
           </div>
         </div>
 
-        {/* Items + Summary */}
+        {/* --- ARTÍCULOS Y DESGLOSE DE PRECIOS --- */}
         <div className="bg-white rounded-md border border-neutral-200 overflow-hidden mb-6">
           <div className="p-4 border-b border-neutral-100">
             <h2 className="text-xs font-semibold uppercase tracking-wider text-neutral-900">Items Ordered</h2>
           </div>
+
+          {/* Lista de productos */}
           <div className="divide-y divide-neutral-100 p-4">
             {items.map((item: any, idx: number) => (
               <div key={idx} className="py-2.5 flex items-center justify-between gap-4 text-xs">
@@ -105,7 +135,7 @@ export const OrderConfirmation: React.FC = () => {
             ))}
           </div>
 
-          {/* Price breakdown */}
+          {/* Desglose de precios (Subtotal, Descuento condicional, Envío y Total) */}
           <div className="bg-neutral-50/60 p-4 border-t border-neutral-100 text-xs space-y-2">
             {[
               { label: "Subtotal", value: `$${Number(order.subtotal).toFixed(2)}`, cls: "text-neutral-600" },
@@ -135,7 +165,7 @@ export const OrderConfirmation: React.FC = () => {
             </div>
           </div>
 
-          {/* Address + Payment */}
+          {/* --- DIRECCIÓN Y PAGO --- */}
           <div className="p-4 border-t border-neutral-100 grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
             <div>
               <span className="font-medium text-neutral-400 uppercase tracking-wider block mb-1 text-[10px]">
@@ -160,6 +190,7 @@ export const OrderConfirmation: React.FC = () => {
           </div>
         </div>
 
+        {/* --- ACCIÓN FINAL --- */}
         <div className="text-center">
           <Link
             to={`/store/${storeSlug}`}
