@@ -50,8 +50,8 @@ export const StoreSetup: React.FC = () => {
   const [logoUrl, setLogoUrl] = useState("");
   const [bannerUrl, setBannerUrl] = useState("");
   const [loading, setLoading] = useState(false);
-  // Solo existe indicador de subida para el logo (ver notas: el banner no).
   const [uploadingLogo, setUploadingLogo] = useState(false);
+  const [uploadingBanner, setUploadingBanner] = useState(false);
 
   // ---- GUARDAS DE ACCESO ----
   // Todos los hooks están ARRIBA de estos `return` (requisito de React: los
@@ -120,11 +120,10 @@ export const StoreSetup: React.FC = () => {
     formData.append("image", file);
 
     if (field === "logo") setUploadingLogo(true);
+    else setUploadingBanner(true);
 
     try {
-      const res = await api.post("/api/upload/single", formData, {
-        headers: { "Content-Type": "multipart/form-data" },
-      });
+      const res = await api.post("/api/upload/single", formData);
 
       if (res.data.success) {
         if (field === "logo") setLogoUrl(res.data.url);
@@ -132,11 +131,10 @@ export const StoreSetup: React.FC = () => {
         toast.success("Image uploaded!");
       }
     } catch {
-      // Mensaje genérico: no distingue archivo demasiado grande, sin
-      // sesión (401), etc.
       toast.error("Image upload failed");
     } finally {
       if (field === "logo") setUploadingLogo(false);
+      else setUploadingBanner(false);
     }
   };
 
@@ -263,10 +261,11 @@ export const StoreSetup: React.FC = () => {
                 <option value="GBP">GBP (£)</option>
                 <option value="CAD">CAD ($)</option>
                 <option value="INR">INR (₹)</option>
+                <option value="GHS">GHS (GH₵)</option>
               </select>
             </div>
             <div>
-              <label className="block text-[11px] font-medium text-neutral-700 mb-1.5">Shipping Fee ($)</label>
+              <label className="block text-[11px] font-medium text-neutral-700 mb-1.5">Shipping Fee ({currency})</label>
               <input
                 type="number"
                 step="0.5"
@@ -278,7 +277,7 @@ export const StoreSetup: React.FC = () => {
             </div>
             <div>
               {/* Umbral de envío gratis: 0 significa "sin envío gratis" (ver `createOrder`). */}
-              <label className="block text-[11px] font-medium text-neutral-700 mb-1.5">Free Shipping Over ($)</label>
+              <label className="block text-[11px] font-medium text-neutral-700 mb-1.5">Free Shipping Over ({currency})</label>
               <input
                 type="number"
                 step="1"
@@ -320,7 +319,7 @@ export const StoreSetup: React.FC = () => {
               />
               <label className="inline-flex items-center gap-1.5 px-3.5 py-1.5 bg-neutral-100 hover:bg-neutral-200 rounded-full text-[11px] font-medium text-neutral-700 cursor-pointer transition">
                 <Upload className="w-3.5 h-3.5" />
-                <span>Upload Banner</span>
+                <span>{uploadingBanner ? "Uploading..." : "Upload Banner"}</span>
                 <input type="file" accept="image/*" className="hidden" onChange={(e) => handleFileUpload(e, "banner")} />
               </label>
             </div>

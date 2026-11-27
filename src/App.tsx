@@ -47,6 +47,8 @@ export default function App() {
                     <Route path="/store/:storeSlug/checkout" element={<CheckoutPage />} />
                     <Route path="/store/:storeSlug/order-confirmation/:orderNumber" element={<OrderConfirmation />} />
                     <Route path="/store/:storeSlug/login" element={<CustomerAuth />} />
+                    <Route path="/store/:storeSlug/register" element={<CustomerAuth />} />
+                    <Route path="/store/:storeSlug/auth" element={<CustomerAuth />} />
                     <Route path="/store/:storeSlug/orders" element={<CustomerOrders />} />
 
                     {/* Merchant Portal */}

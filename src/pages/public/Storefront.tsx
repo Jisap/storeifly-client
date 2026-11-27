@@ -1,10 +1,11 @@
 import React, { useEffect, useState } from "react";
-import { useParams, Link } from "react-router-dom";
+import { useParams, Link, useNavigate } from "react-router-dom";
 import { Spinner } from "../../components/common/Spinner";
 import { StoreNavbar } from "../../components/StoreNavbar";
 import { StoreFooter } from "../../components/StoreFooter";
 import { useCart } from "../../context/CartContext";
 import { AlertCircle } from "lucide-react";
+import toast from "react-hot-toast";
 import { StoreHeroBanner } from "../../components/public/storefront/StoreHeroBanner";
 import { StoreCatalogGrid } from "../../components/public/storefront/StoreCatalogGrid";
 import { StoreTestimonials } from "../../components/public/storefront/StoreTestimonials";
@@ -23,6 +24,7 @@ export const Storefront: React.FC = () => {
   const { storeSlug } = useParams<{ storeSlug: string }>();
   // Accede al contexto del carrito para sincronizar la tienda activa y añadir productos
   const { setStoreSlug, addToCart } = useCart();
+  const navigate = useNavigate();
 
   // Estados de datos y UI (Nota: se recomienda definir interfaces `Store` y `Product` en el futuro)
   const [store, setStore] = useState<any>(null);
@@ -66,11 +68,22 @@ export const Storefront: React.FC = () => {
 
   /**
    * Maneja la adición rápida de un producto al carrito.
-   * Detiene la propagación del evento para evitar navegaciones no deseadas (ej. si está dentro de un <Link>).
+   * Si el producto tiene variantes, redirige al detalle para que el cliente elija.
    */
   const handleQuickAdd = (e: React.MouseEvent, p: any) => {
     e.preventDefault();
     e.stopPropagation();
+
+    // Si tiene variantes, redirigir al detalle para que elija opciones
+    if (p.variants && p.variants.length > 0) {
+      navigate(`/store/${storeSlug}/products/${p.id}`);
+      return;
+    }
+
+    if (p.stock !== undefined && p.stock <= 0) {
+      toast.error("This product is out of stock");
+      return;
+    }
 
     addToCart({
       productId: p.id,
@@ -78,8 +91,7 @@ export const Storefront: React.FC = () => {
       price: Number(p.price),
       image: p.images?.[0],
       quantity: 1,
-      // Construye una cadena de variante por defecto si existen variantes
-      variant: p.variants?.length ? `${p.variants[0].name}: ${p.variants[0].options[0]}` : undefined,
+      variant: undefined,
       stock: p.stock,
     });
 

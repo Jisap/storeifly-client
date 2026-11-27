@@ -34,22 +34,25 @@ const EMPTY_FORM = {
 
 /**
  * Carga datos de la tienda del comerciante desde un endpoint que filtra por
- * `?storeId=`. Hace DOS peticiones: primero `GET /api/stores/me` (para saber
- * el id de la tienda) y luego `GET <path>?storeId=<id>`.
- *
- * @param path - Ruta a consultar, p. ej. "/api/products" o "/api/categories".
- * @returns El cuerpo de la respuesta (`{ success, products }` o
- *          `{ success, categories }`), o `null` si algo no fue bien.
- *
- * OJO: no captura errores (ver notas): si falla una petición, la promesa se
- * rechaza y los `.then` de quien la llama no llegan a ejecutarse.
+ * `?storeId=`. Obtiene primero la tienda si es necesario y luego consulta los datos.
  */
+let cachedStoreId: number | null = null;
+
 const fetchStoreData = async (path: string) => {
-  const storeRes = await api.get("/api/stores/me");
-  if (!storeRes.data?.success) return null;
-  const storeId = storeRes.data.store.id;
-  const res = await api.get(`${path}?storeId=${encodeURIComponent(storeId)}`);
-  return res.data?.success ? res.data : null;
+  try {
+    if (!cachedStoreId) {
+      const storeRes = await api.get("/api/stores/me");
+      if (!storeRes.data?.success || !storeRes.data.store?.id) return null;
+      cachedStoreId = storeRes.data.store.id;
+    }
+    const storeId = cachedStoreId;
+    if (!storeId) return null;
+    const res = await api.get(`${path}?storeId=${encodeURIComponent(storeId)}`);
+    return res.data?.success ? res.data : null;
+  } catch (err) {
+    console.error(`fetchStoreData error on ${path}:`, err);
+    return null;
+  }
 };
 
 /**
@@ -97,25 +100,43 @@ export const ProductsPage: React.FC = () => {
    */
   const setF = (key: keyof typeof EMPTY_FORM, val: any) => setForm((f) => ({ ...f, [key]: val }));
 
-  // Carga inicial: productos y categorías, en paralelo (dos llamadas independientes).
-  // Cada una repite internamente `GET /api/stores/me` (ver notas).
+  // Carga inicial: productos y categorías, en paralelo.
   useEffect(() => {
-    fetchStoreData("/api/products").then((d) => {
-      if (d) setProducts(d.products);
-      setLoading(false);
-    })
-    fetchStoreData("/api/categories").then((d) => {
-      if (d) setCategories(d.categories);
-    })
+    let active = true;
+    const loadInitialData = async () => {
+      setLoading(true);
+      try {
+        const [prodData, catData] = await Promise.all([
+          fetchStoreData("/api/products"),
+          fetchStoreData("/api/categories"),
+        ]);
+        if (!active) return;
+        if (prodData?.products) setProducts(prodData.products);
+        if (catData?.categories) setCategories(catData.categories);
+      } catch (err) {
+        console.error("Failed to load initial merchant products/categories:", err);
+      } finally {
+        if (active) setLoading(false);
+      }
+    };
+
+    void loadInitialData();
+    return () => {
+      active = false;
+    };
   }, []);
 
   /** Recarga la lista de productos (se llama tras crear o editar uno). */
   const refetchProducts = async () => {
     setLoading(true);
-    fetchStoreData("/api/products").then((d) => {
-      if (d) setProducts(d.products);
-      setLoading(false)
-    })
+    try {
+      const d = await fetchStoreData("/api/products");
+      if (d?.products) setProducts(d.products);
+    } catch (err) {
+      console.error("Failed to refetch products:", err);
+    } finally {
+      setLoading(false);
+    }
   };
 
   /**
